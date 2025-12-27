@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统分享方式测试</title>
+    <script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .share-container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .share-btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            text-align: center;
+            transition: background-color 0.3s;
+        }
+        .share-btn-url { background-color: #007bff; } /* 蓝色 */
+        .share-btn-url:hover { background-color: #0056b3; }
+        .share-btn-file { background-color: #28a745; } /* 绿色 */
+        .share-btn-file:hover { background-color: #1e7e34; }
+        .share-btn-qr { background-color: #ffc107; color: #212529; } /* 黄色 */
+        .share-btn-qr:hover { background-color: #e0a800; }
+        .status-message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status-success { background-color: #d4edda; color: #155724; }
+        .status-info { background-color: #d1ecf1; color: #0c5460; }
+        .status-error { background-color: #f8d7da; color: #721c24; }
+        .status-warning { background-color: #fff3cd; color: #856404; }
+        #qrCode {
+            margin-top: 20px;
+            text-align: center;
+            display: none;
+        }
+        #qrImage {
+            max-width: 200px;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+
+<div class="share-container">
+    <h1>系统分享方式测试</h1>
+    <p>测试不同方式调起系统分享菜单</p>
+
+    <button id="shareUrlBtn" class="share-btn share-btn-url">分享链接到系统菜单</button>
+    <button id="shareFileBtn" class="share-btn share-btn-file">分享图片到系统菜单</button>
+    <button id="generateQRBtn" class="share-btn share-btn-qr">生成二维码分享</button>
+
+    <div id="statusMessage" class="status-message"></div>
+    <div id="qrCode">
+        <p>扫描下方二维码分享：</p>
+        <img id="qrImage" alt="二维码" style="display: none; max-width: 200px;">
+    </div>
+</div>
+
+<script>
+    const targetUrl = 'https://www.baidu.com'; // 要分享的 URL
+    const targetTitle = '分享一个链接'; // 可选的分享标题
+    const targetText = '快来看这个链接！'; // 可选的分享文本
+
+    const shareUrlBtn = document.getElementById('shareUrlBtn');
+    const shareFileBtn = document.getElementById('shareFileBtn');
+    const generateQRBtn = document.getElementById('generateQRBtn');
+    const statusDiv = document.getElementById('statusMessage');
+    const qrDiv = document.getElementById('qrCode');
+    const qrImage = document.getElementById('qrImage');
+
+    function showStatus(message, type) {
+        statusDiv.textContent = message;
+        statusDiv.className = 'status-message status-' + type;
+        statusDiv.style.display = 'block';
+
+        // 3秒后自动隐藏状态信息
+        setTimeout(() => {
+            statusDiv.style.display = 'none';
+        }, 3000);
+    }
+
+    function hideQR() {
+        qrDiv.style.display = 'none';
+        qrImage.style.display = 'none';
+        qrImage.src = ''; // 清空图片源
+    }
+
+    function showQR() {
+        qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(targetUrl)}`;
+        qrImage.style.display = 'block';
+        qrDiv.style.display = 'block';
+    }
+
+    // 检查 Web Share API 基础支持
+    function checkWebShareAPI() {
+        if (!navigator.share) {
+            showStatus('❌ 浏览器不支持 Web Share API (基础)。', 'error');
+            return false;
+        }
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            showStatus('⚠️ 当前页面不是 HTTPS 环境，Web Share API 可能无法使用。', 'warning');
+            return false; // 在非 HTTPS 环境下，即使 API 存在也可能被禁用
+        }
+        return true;
+    }
+
+    // ===== 按钮 1: 分享链接 =====
+    shareUrlBtn.addEventListener('click', async () => {
+        console.log('点击了 "分享链接" 按钮');
+        if (!checkWebShareAPI()) {
+            return; // 检查不通过，直接返回
+        }
+
+        try {
+            await navigator.share({
+                title: targetTitle,
+                text: targetText,
+                url: targetUrl
+            });
+            console.log('分享链接成功');
+            showStatus('✅ 分享链接成功！', 'success');
+            hideQR(); // 分享成功后隐藏二维码
+        } catch (error) {
+            console.error('分享链接失败:', error);
+            let errorMessage = `分享链接失败: ${error.message || error}`;
+            if (error.name === 'AbortError' || error.message.includes('canceled')) {
+                errorMessage = '⚠️ 分享链接操作已取消。';
+                showStatus(errorMessage, 'warning');
+            } else {
+                showStatus(errorMessage, 'error');
+                // 失败后可以选择显示二维码作为备用方案
+                showQR();
+            }
+        }
+    });
+
+    // ===== 按钮 2: 分享图片 =====
+    shareFileBtn.addEventListener('click', async () => {
+        console.log('点击了 "分享图片" 按钮');
+        if (!checkWebShareAPI()) {
+            return; // 检查不通过，直接返回
+        }
+
+        // 检查是否支持分享文件
+        if (!navigator.canShare) {
+            showStatus('❌ 浏览器不支持 navigator.canShare API，无法分享文件。', 'error');
+            return;
+        }
+
+        // 生成一个简单的测试图片 (一个 100x100 的蓝色正方形)
+        const canvas = document.createElement('canvas');
+        canvas.width = 100;
+        canvas.height = 100;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'blue';
+        ctx.fillRect(0, 0, 100, 100);
+
+        try {
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            if (!blob) {
+                 throw new Error('Canvas toBlob failed, returned null.');
+            }
+            const file = new File([blob], 'test_image.png', { type: 'image/png' });
+            const shareData = {
+                title: '分享一张图片',
+                text: '这是一张测试图片',
+                files: [file]
+            };
+
+            // 检查是否可以分享这个文件
+            if (!navigator.canShare(shareData)) {
+                console.warn('navigator.canShare 返回 false，可能不支持分享此类型的文件或格式。');
+                showStatus('❌ 浏览器不支持分享此图片文件 (navigator.canShare 检查失败)。', 'error');
+                // 尝试回退到分享链接
+                showStatus('尝试回退到分享链接...', 'info');
+                shareUrlBtn.click(); // 模拟点击分享链接按钮
+                return;
+            }
+
+            await navigator.share(shareData);
+            console.log('分享图片成功');
+            showStatus('✅ 分享图片成功！', 'success');
+            hideQR(); // 分享成功后隐藏二维码
+        } catch (error) {
+            console.error('分享图片失败:', error);
+            let errorMessage = `分享图片失败: ${error.message || error}`;
+            if (error.name === 'AbortError' || error.message.includes('canceled')) {
+                errorMessage = '⚠️ 分享图片操作已取消。';
+                showStatus(errorMessage, 'warning');
+            } else {
+                showStatus(errorMessage, 'error');
+                // 失败后可以选择显示二维码作为备用方案
+                showQR();
+            }
+        }
+    });
+
+    // ===== 按钮 3: 生成二维码 =====
+    generateQRBtn.addEventListener('click', () => {
+        console.log('点击了 "生成二维码" 按钮');
+        console.log('当前浏览器不支持 Web Share API，或分享失败，显示二维码作为备选方案。');
+        showStatus('正在生成二维码...', 'info');
+        showQR();
+    });
+
+    // 页面加载时检查一次 Web Share API 支持情况
+    window.addEventListener('load', () => {
+        if (navigator.share) {
+            console.log('当前浏览器支持 Web Share API (基础)。');
+            // 检查是否是 HTTPS
+            if (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+                 console.log('当前页面是 HTTPS 环境或本地环境，Web Share API 可用。');
+                 showStatus('当前浏览器支持 Web Share API (HTTPS 环境)。', 'info');
+            } else {
+                 console.log('当前页面不是 HTTPS 环境，Web Share API 可能不可用。');
+                 showStatus('当前浏览器支持 Web Share API，但页面非 HTTPS，可能无法使用。', 'warning');
+            }
+        } else {
+            console.log('当前浏览器不支持 Web Share API (基础)。');
+            showStatus('当前浏览器不支持 Web Share API (基础)。', 'error');
+        }
+
+        if (navigator.canShare) {
+            console.log('当前浏览器支持 navigator.canShare API。');
+        } else {
+            console.log('当前浏览器不支持 navigator.canShare API。');
+        }
+    });
+
+</script>
+
+</body>
+</html>
