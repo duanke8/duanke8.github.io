@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel 数据导入</title>
+    <script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: "SimSun", "宋体", serif;
+            background-color: #f9f9f9;
+            padding: 0;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .container {
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 95%;
+            max-width: 90%;
+            margin: 0 auto;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        #statusMessage {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+            display: none;
+            background-color: #fff59d;
+        }
+        .loading { background-color: #fff59d; }
+        .success { background-color: #c8e6c9; }
+        .error { background-color: #ffcdd2; }
+        .warning { background-color: #ffe0b2; }
+
+        #excelFileInput {
+            margin-bottom: 15px;
+        }
+
+        .table-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            max-height: calc(100vh - 180px);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            min-width: 300px;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 6px 4px;
+            text-align: center;
+            word-break: keep-all;
+            white-space: nowrap;
+        }
+        th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .action-cell {
+            width: 140px;
+            padding: 4px !important;
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        .button-row {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-around;
+            gap: 1px;
+        }
+        .text-btn, .img-btn, .img2-btn, .share-btn, .share2-btn {
+            flex: 1;
+            margin: 0 0.5px;
+            padding: 3px 0;
+            font-size: 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-align: center;
+            white-space: nowrap;
+        }
+        .text-btn { background-color: #4CAF50; color: white; }
+        .img-btn { background-color: #2196F3; color: white; }
+        .img2-btn { background-color: #FF9800; color: white; }
+        .share-btn { background-color: #9C27B0; color: white; }
+        .share2-btn { background-color: #FF5722; color: white; }
+        .text-btn:hover { background-color: #45a049; }
+        .img-btn:hover { background-color: #1976D2; }
+        .img2-btn:hover { background-color: #EF6C00; }
+        .share-btn:hover { background-color: #7B1FA2; }
+        .share2-btn:hover { background-color: #E64A19; }
+
+        .highlight-row {
+            background-color: #e3f2fd !important;
+            transition: background-color 0.3s;
+        }
+
+        .temp-table-container {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            background: white;
+            padding: 10px;
+            border-collapse: collapse;
+        }
+        .temp-table-container th, .temp-table-container td {
+            border: 1px solid #000;
+            padding: 8px;
+            text-align: left;
+        }
+        .temp-table-container th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+        .temp-table-container td {
+            word-break: break-word;
+        }
+    </style>
+</head>
+<body>
+
+<div id="statusMessage" class="loading">工具正在加载，请稍等...</div>
+
+<div class="container">
+    <input type="file" id="excelFileInput" accept=".xls,.xlsx" />
+    <div class="table-wrapper">
+        <table id="dataTable">
+            <thead id="thead"></thead>
+            <tbody id="tbody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let currentHighlightedRow = null;
+
+    function updateStatus(message, className = 'loading') {
+        const statusDiv = document.getElementById('statusMessage');
+        statusDiv.className = 'loading ' + className;
+        statusDiv.textContent = message;
+        statusDiv.style.display = 'block';
+    }
+
+    function checkLibraries() {
+        if (typeof XLSX === 'undefined') {
+            updateStatus("加载失败: xlsx.full.min.js", 'error');
+            setTimeout(checkLibraries, 500);
+            return false;
+        }
+        if (typeof html2canvas === 'undefined') {
+            updateStatus("加载失败: html2canvas.min.js", 'error');
+            setTimeout(checkLibraries, 500);
+            return false;
+        }
+        updateStatus("加载成功！", 'success');
+        setTimeout(() => {
+            updateStatus("", 'success');
+            document.getElementById('statusMessage').style.display = 'none';
+        }, 2000);
+
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+             updateStatus('⚠️ 重要提示：\n当前页面不是 HTTPS 环境，分享功能可能无法正常工作。\n请将网页部署到 HTTPS 服务器上以使用分享功能。', 'warning');
+        }
+
+        document.getElementById('excelFileInput').addEventListener('change', handleFileUpload, false);
+        return true;
+    }
+
+    window.onload = () => {
+        updateStatus('工具正在加载，请稍等...', 'loading');
+        checkLibraries();
+    };
+
+    function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            updateStatus('正在解析Excel文件...', 'success');
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            updateStatus('Excel文件解析完成，正在处理数据...', 'success');
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const sheetData = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
+            if (sheetData.length === 0) {
+                updateStatus("Excel 文件为空或未找到数据。", 'error');
+                return;
+            }
+            const headerRow = sheetData[0];
+            const rows = sheetData.slice(1);
+            const maxCols = headerRow.length;
+            const processedRows = rows.map(row => {
+                while (row.length < maxCols) row.push("");
+                return row.map(cell => cell === null || cell === undefined ? "" : cell);
+            });
+            updateStatus('数据处理完成，正在更新页面...', 'success');
+            updateTable(headerRow, processedRows);
+            updateStatus('页面更新完成。', 'success');
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function updateTable(header, rows) {
+        const thead = document.getElementById('thead');
+        const tbody = document.getElementById('tbody');
+        thead.innerHTML = '';
+        const trHeader = document.createElement('tr');
+        const actionTh = document.createElement('th');
+        actionTh.textContent = '操作';
+        trHeader.appendChild(actionTh);
+        header.forEach(cell => {
+            const th = document.createElement('th');
+            th.textContent = cell;
+            trHeader.appendChild(th);
+        });
+        thead.appendChild(trHeader);
+
+        tbody.innerHTML = '';
+        rows.forEach((rowData, rowIndex) => {
+            const tr = document.createElement('tr');
+            tr.dataset.rowIndex = rowIndex;
+
+            const actionCell = document.createElement('td');
+            actionCell.className = 'action-cell';
+            const buttonRow = document.createElement('div');
+            buttonRow.className = 'button-row';
+
+            const textBtn = document.createElement('button');
+            textBtn.className = 'text-btn';
+            textBtn.textContent = '文字';
+            textBtn.onclick = () => handleCopyText(rowIndex, header, rowData, tr);
+            buttonRow.appendChild(textBtn);
+
+            const imgBtn = document.createElement('button');
+            imgBtn.className = 'img-btn';
+            imgBtn.textContent = '图片';
+            imgBtn.onclick = () => handleSaveImage(rowIndex, header, rowData, tr);
+            buttonRow.appendChild(imgBtn);
+
+            const img2Btn = document.createElement('button');
+            img2Btn.className = 'img2-btn';
+            img2Btn.textContent = '图片2';
+            img2Btn.onclick = () => handleSaveImageVertical(rowIndex, header, rowData, tr);
+            buttonRow.appendChild(img2Btn);
+
+            const shareBtn = document.createElement('button');
+            shareBtn.className = 'share-btn';
+            shareBtn.textContent = '分享';
+            shareBtn.onclick = () => handleShareImage(rowIndex, header, rowData, tr);
+            buttonRow.appendChild(shareBtn);
+
+            const share2Btn = document.createElement('button');
+            share2Btn.className = 'share2-btn';
+            share2Btn.textContent = '分享2'; // 修正：设置正确的按钮文字
+            share2Btn.onclick = () => handleShareUrl(rowIndex, header, rowData, tr);
+            buttonRow.appendChild(share2Btn);
+
+            actionCell.appendChild(buttonRow);
+            tr.appendChild(actionCell);
+
+            rowData.forEach((cellData, dataIndex) => {
+                const td = document.createElement('td');
+                td.textContent = cellData === 0 ? "0" : (cellData || "");
+                tr.appendChild(td);
+            });
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    function handleCopyText(rowIndex, header, rowData, rowElement) {
+        highlightRow(rowElement);
+        let text = '';
+        for (let i = 0; i < header.length; i++) {
+            const key = (header[i] || `字段${i + 1}`).trim();
+            const value = (rowData[i] === 0) ? "0" : (rowData[i] || "").toString().trim();
+            text += `${key}: ${value}\n`;
+        }
+        text = text.trim();
+
+        const tempTextarea = document.createElement('textarea');
+        tempTextarea.value = text;
+        tempTextarea.style.position = 'fixed';
+        tempTextarea.style.left = '-9999px';
+        tempTextarea.style.top = '-9999px';
+        tempTextarea.style.opacity = '0';
+        tempTextarea.style.pointerEvents = 'none';
+        document.body.appendChild(tempTextarea);
+
+        tempTextarea.select();
+        tempTextarea.setSelectionRange(0, 99999);
+
+        try {
+            const success = document.execCommand('copy');
+            if (success) {
+                updateStatus('✅ 文字已复制！\n可直接粘贴到微信、QQ等应用。', 'success');
+            } else {
+                updateStatus('❌ 复制失败，请手动长按选择文字复制。\n\n内容已打印到控制台。', 'error');
+                console.log('要复制的内容：\n', text);
+            }
+        } catch (err) {
+            console.error('复制操作失败:', err);
+            updateStatus('❌ 复制失败，请手动长按选择文字复制。\n\n内容已打印到控制台。', 'error');
+            console.log('要复制的内容：\n', text);
+        } finally {
+            document.body.removeChild(tempTextarea);
+        }
+    }
+
+    async function handleSaveImage(rowIndex, header, rowData, rowElement) {
+        highlightRow(rowElement);
+        updateStatus('步骤 1: 创建临时表格元素...', 'success');
+        const tempDiv = document.createElement('div');
+        tempDiv.className = 'temp-table-container';
+
+        let html = '<table style="border-collapse: collapse; font-family: SimSun, 宋体, serif; font-size: 14px;">';
+        html += '<thead><tr>';
+        header.forEach(h => {
+            html += `<th style="border:1px solid #000; padding:8px; background:#f0f0f0; font-weight:bold;">${(h || '').toString().trim()}</th>`;
+        });
+        html += '</tr></thead>';
+        html += '<tbody><tr>';
+        rowData.forEach(cell => {
+            const display = (cell === 0) ? "0" : (cell || "").toString().trim();
+            html += `<td style="border:1px solid #000; padding:8px;">${display}</td>`;
+        });
+        html += '</tr></tbody></table>';
+
+        tempDiv.innerHTML = html;
+        document.body.appendChild(tempDiv);
+        updateStatus('步骤 2: 临时表格已创建并添加到页面。', 'success');
+
+        try {
+            updateStatus('步骤 3: 开始使用 html2canvas 生成画布...', 'success');
+            const canvas = await html2canvas(tempDiv, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                allowTaint: true
+            });
+            updateStatus('步骤 4: 画布生成成功。', 'success');
+
+            updateStatus('步骤 5: 将画布转换为图片文件...', 'success');
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/png');
+            });
+            if (!blob) {
+                 throw new Error('Canvas toBlob failed, returned null.');
+            }
+            updateStatus('步骤 6: 图片文件创建成功。', 'success');
+
+            const nameColumnIndex = header.indexOf('姓名');
+            const baseName = nameColumnIndex !== -1 ? rowData[nameColumnIndex].toString().trim() : `order_${rowIndex + 1}`;
+            const safeBaseName = baseName.replace(/[<>:"\/\\|?*\x00-\x1f]/g, '_');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const fileName = `${safeBaseName}_${timestamp}.png`;
+
+            updateStatus('步骤 7: 准备下载链接...', 'success');
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+
+            document.body.appendChild(a);
+            if (typeof a.click === 'function') {
+                a.click();
+            } else {
+                a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            }
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            updateStatus('步骤 8: 图片下载已触发。', 'success');
+
+            setTimeout(() => {
+                updateStatus(`✅ 图片下载成功！\n文件名: ${fileName}\n请在手机相册或下载文件夹中查看。`, 'success');
+            }, 500);
+
+        } catch (err) {
+            console.error('生成横向图片失败:', err);
+            updateStatus(`❌ 下载横向图片有问题！\n错误信息: ${err.message || err}\n请检查控制台获取详细信息。`, 'error');
+        } finally {
+            if (document.body.contains(tempDiv)) {
+                document.body.removeChild(tempDiv);
+            }
+        }
+    }
+
+    async function handleSaveImageVertical(rowIndex, header, rowData, rowElement) {
+        highlightRow(rowElement);
+        updateStatus('步骤 1: 创建临时竖向表格元素...', 'success');
+        const tempDiv = document.createElement('div');
+        tempDiv.className = 'temp-table-container';
+
+        let html = '<table style="border-collapse: collapse; font-family: SimSun, 宋体, serif; font-size: 14px;">';
+        html += '<tbody>';
+        for (let i = 0; i < header.length; i++) {
+            const key = (header[i] || `字段${i + 1}`).trim();
+            const value = (rowData[i] === 0) ? "0" : (rowData[i] || "").toString().trim();
+            html += `<tr>`;
+            html += `<td style="border:1px solid #000; padding:8px; text-align:left;"><strong>${key}</strong></td>`;
+            html += `<td style="border:1px solid #000; padding:8px; text-align:left;">${value}</td>`;
+            html += `</tr>`;
+        }
+        html += '</tbody></table>';
+
+        tempDiv.innerHTML = html;
+        document.body.appendChild(tempDiv);
+        updateStatus('步骤 2: 临时竖向表格已创建并添加到页面。', 'success');
+
+        try {
+            updateStatus('步骤 3: 开始使用 html2canvas 生成画布...', 'success');
+            const canvas = await html2canvas(tempDiv, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                allowTaint: true
+            });
+            updateStatus('步骤 4: 画布生成成功。', 'success');
+
+            updateStatus('步骤 5: 将画布转换为图片文件...', 'success');
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/png');
+            });
+            if (!blob) {
+                 throw new Error('Canvas toBlob failed, returned null.');
+            }
+            updateStatus('步骤 6: 图片文件创建成功。', 'success');
+
+            const nameColumnIndex = header.indexOf('姓名');
+            const baseName = nameColumnIndex !== -1 ? rowData[nameColumnIndex].toString().trim() : `order_${rowIndex + 1}`;
+            const safeBaseName = baseName.replace(/[<>:"\/\\|?*\x00-\x1f]/g, '_');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const fileName = `${safeBaseName}_${timestamp}.png`;
+
+            updateStatus('步骤 7: 准备下载链接...', 'success');
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+
+            document.body.appendChild(a);
+            if (typeof a.click === 'function') {
+                a.click();
+            } else {
+                a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            }
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            updateStatus('步骤 8: 竖向图片下载已触发。', 'success');
+
+            setTimeout(() => {
+                updateStatus(`✅ 竖向图片下载成功！\n文件名: ${fileName}\n请在手机相册或下载文件夹中查看。`, 'success');
+            }, 500);
+
+        } catch (err) {
+            console.error('生成竖向图片失败:', err);
+            updateStatus(`❌ 下载竖向图片有问题！\n错误信息: ${err.message || err}\n请检查控制台获取详细信息。`, 'error');
+        } finally {
+            if (document.body.contains(tempDiv)) {
+                document.body.removeChild(tempDiv);
+            }
+        }
+    }
+
+    // ===== 通用分享函数 (新增) =====
+    async function performShare(shareData, isFileShare = false) {
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            throw new Error('当前页面不是 HTTPS 环境，无法使用 Web Share API。');
+        }
+        if (!navigator.share) {
+            throw new Error('浏览器不支持 Web Share API (基础)。');
+        }
+        if (isFileShare) {
+            if (!navigator.canShare || !navigator.canShare(shareData)) {
+                throw new Error('浏览器不支持分享文件或 navigator.canShare API 不存在。');
+            }
+        }
+        try {
+            await navigator.share(shareData);
+            if (isFileShare) {
+                updateStatus('✅ 图片分享已启动！\n请在分享菜单中选择应用。', 'success');
+            } else {
+                updateStatus('✅ 链接分享已启动！\n请在分享菜单中选择应用。', 'success');
+            }
+            return true;
+        } catch (err) {
+            console.error('调用 navigator.share 失败:', err);
+            if (err.name === 'AbortError' || err.message.includes('canceled')) {
+                updateStatus('⚠️ 分享操作已取消。', 'warning');
+            } else {
+                throw err; // 抛出错误，让调用者处理
+            }
+            return false;
+        }
+    }
+
+    // ===== 修正后的 handleShareUrl (分享2) =====
+    async function handleShareUrl(rowIndex, header, rowData, rowElement) {
+        highlightRow(rowElement);
+        updateStatus('准备分享链接...', 'success');
+
+        const shareData = {
+            title: '分享链接',
+            text: '这是一个分享链接示例',
+            url: 'https://www.baidu.com'
+        };
+
+        try {
+            await performShare(shareData, false);
+        } catch (err) {
+            updateStatus(`❌ 分享链接失败: ${err.message || err}`, 'error');
+            // 不再自动下载
+        }
+    }
+
+    // ===== 修改后的 handleShareImage (分享) =====
+    async function handleShareImage(rowIndex, header, rowData, rowElement) {
+        highlightRow(rowElement);
+        updateStatus('准备分享图片...', 'success');
+
+        // 检查 HTTPS
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+             updateStatus('❌ 分享失败：\n当前页面不是 HTTPS 环境，无法使用 Web Share API。', 'error');
+             return;
+        }
+
+        // 检查 Web Share API 支持
+        if (!navigator.share) {
+            updateStatus('❌ 分享失败：\n当前浏览器不支持 Web Share API (基础)。', 'error');
+            return; // 不再调用下载
+        }
+
+        // 生成图片并获取 Blob
+        const blob = await generateImageBlob(rowIndex, header, rowData);
+        if (!blob) {
+            updateStatus('❌ 图片生成失败，无法分享。', 'error');
+            return;
+        }
+
+        // 获取文件名
+        const nameColumnIndex = header.indexOf('姓名');
+        const baseName = nameColumnIndex !== -1 ? rowData[nameColumnIndex].toString().trim() : `order_${rowIndex + 1}`;
+        const safeBaseName = baseName.replace(/[<>:"\/\\|?*\x00-\x1f]/g, '_');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const fileName = `${safeBaseName}_${timestamp}.png`;
+
+        // 尝试使用 navigator.share 的 files 参数分享图片
+        const file = new File([blob], fileName, { type: 'image/png' });
+        const shareData = {
+            title: `分享 - ${baseName}`,
+            text: `来自 ${baseName} 的订单详情`,
+            files: [file]
+        };
+
+        updateStatus('步骤 7: 检查浏览器是否支持分享文件...', 'success');
+        if (!navigator.canShare || !navigator.canShare(shareData)) {
+            console.warn('浏览器不支持分享文件或 navigator.canShare API 不存在。');
+            updateStatus('❌ 浏览器不支持分享图片文件。\n请使用“图片”按钮下载后手动分享。', 'error');
+            return; // 不再自动下载
+        }
+
+        updateStatus('步骤 8: Web Share API (文件) 可用，准备分享...', 'success');
+        try {
+            await performShare(shareData, true);
+        } catch (err) {
+            updateStatus(`❌ 分享图片失败: ${err.message || err}`, 'error');
+            // 不再自动下载
+        }
+    }
+
+    // 提取生成图片 Blob 的逻辑
+    async function generateImageBlob(rowIndex, header, rowData) {
+        const tempDiv = document.createElement('div');
+        tempDiv.className = 'temp-table-container';
+
+        let html = '<table style="border-collapse: collapse; font-family: SimSun, 宋体, serif; font-size: 14px;">';
+        html += '<thead><tr>';
+        header.forEach(h => {
+            html += `<th style="border:1px solid #000; padding:8px; background:#f0f0f0; font-weight:bold;">${(h || '').toString().trim()}</th>`;
+        });
+        html += '</tr></thead>';
+        html += '<tbody><tr>';
+        rowData.forEach(cell => {
+            const display = (cell === 0) ? "0" : (cell || "").toString().trim();
+            html += `<td style="border:1px solid #000; padding:8px;">${display}</td>`;
+        });
+        html += '</tr></tbody></table>';
+
+        tempDiv.innerHTML = html;
+        document.body.appendChild(tempDiv);
+
+        try {
+            const canvas = await html2canvas(tempDiv, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                allowTaint: true
+            });
+
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/png', 1.0);
+            });
+            return blob;
+        } catch (err) {
+            console.error('生成图片失败:', err);
+            return null;
+        } finally {
+            if (document.body.contains(tempDiv)) {
+                document.body.removeChild(tempDiv);
+            }
+        }
+    }
+
+    function highlightRow(rowElement) {
+        if (currentHighlightedRow && currentHighlightedRow !== rowElement) {
+            currentHighlightedRow.classList.remove('highlight-row');
+        }
+        rowElement.classList.add('highlight-row');
+        currentHighlightedRow = rowElement;
+    }
+</script>
+
+</body>
+</html>
